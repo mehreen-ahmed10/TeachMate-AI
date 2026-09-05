@@ -6,6 +6,8 @@ LangChain + ChatGroq + RAG + Chroma + Pydantic
 import os
 import re
 import json
+import hashlib
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -192,6 +194,72 @@ def process_curriculum(file_path):
     return (
         f"Curriculum processed successfully. "
         f"Source sections: {len(docs)} | Searchable chunks: {len(chunks)}"
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def build_uploaded_retriever(file_hash, file_bytes, file_name):
+    """Build an isolated in-memory Chroma retriever for one uploaded file."""
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+        raise ValueError("Supported files: PDF, DOCX, TXT, MD")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        temp_path = tmp.name
+
+    try:
+        docs = load_document(temp_path)
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+    if not docs:
+        raise ValueError("No readable content was found in the uploaded file.")
+
+    chunks = RecursiveCharacterTextSplitter(
+        chunk_size=900, chunk_overlap=120
+    ).split_documents(docs)
+
+    if not chunks:
+        raise ValueError("The uploaded file could not be divided into searchable chunks.")
+
+    collection_name = f"teachmate_upload_{file_hash[:24]}"
+    uploaded_store = Chroma.from_documents(
+        documents=chunks,
+        embedding=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
+        collection_name=collection_name
+    )
+
+    return (
+        uploaded_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 4}
+        ),
+        len(docs),
+        len(chunks)
+    )
+
+
+def get_uploaded_file_hash(file_bytes):
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def retrieve_uploaded_context(uploaded_retriever, query):
+    """Retrieve context only from the file uploaded in the AI Assistant."""
+    try:
+        docs = uploaded_retriever.invoke(query)
+    except Exception:
+        return "NO_RELEVANT_DOCUMENT_CONTEXT_FOUND"
+
+    if not docs:
+        return "NO_RELEVANT_DOCUMENT_CONTEXT_FOUND"
+
+    return "\n\n".join(
+        f"[Document Source {i}]\n{d.page_content}"
+        for i, d in enumerate(docs, 1)
     )
 
 def retrieve_context(query):
@@ -1068,98 +1136,67 @@ By the end of this lesson, students will be able to:
 """
 
 assistant_prompt = ChatPromptTemplate.from_messages([
-
     (
         "system",
-        """
-You are TeachMate AI, a professional classroom teaching assistant.
+        """You are TeachMate AI, a professional classroom teaching assistant.
 
-Help teachers with:
-- explanations
-- classroom activities
-- examples
-- questioning strategies
-- teaching methods
-- classroom resources
-- pedagogical suggestions
-
+Help teachers with explanations, classroom activities, examples, questioning strategies,
+teaching methods, classroom resources and pedagogical suggestions.
 Adapt every response to the selected grade and subject.
 
-Use supplied curriculum context when answering curriculum-specific questions.
-
-Do not fabricate curriculum requirements, syllabus details,
-textbook content, learning outcomes, or curriculum facts.
+DOCUMENT RULES:
+- If uploaded document context is supplied, use that document as the primary source
+  for document-specific questions.
+- Do not invent facts that are claimed to come from the uploaded document.
+- If requested information is not present in the uploaded document, clearly say that
+  the document does not provide that information.
+- General pedagogical suggestions are allowed, but do not present them as facts from
+  the uploaded document.
+- If no document context is supplied, answer normally using your general educational knowledge.
 
 LANGUAGE RULES:
+- If Subject is Urdu, respond completely in natural Urdu script. Never use Roman Urdu.
+- If Subject is Islamic/Quranic Education, Islamiyat, Islamiat, or Islamic Studies,
+  respond completely in Urdu script unless the teacher explicitly requests English.
+- Preserve authentic Arabic Quranic or religious text in Arabic where appropriate.
+- Never invent Quranic verses, Ayah references, Hadith references, translations,
+  or religious quotations.
+- For all other subjects, respond in English unless the teacher requests another language.
 
-If Subject is Urdu:
-- Respond completely in natural Urdu script.
-- Do not use Roman Urdu.
-
-If Subject is Islamic/Quranic Education, Islamiyat, Islamiat,
-or Islamic Studies:
-- Respond completely in Urdu script unless the teacher explicitly
-  requests English.
-- Preserve authentic Arabic Quranic or religious text in Arabic
-  where appropriate.
-- Explain concepts in Urdu.
-- Never invent Quranic verses, Ayah references, Hadith references,
-  translations, or religious quotations.
-
-For all other subjects:
-- Respond in English unless the teacher requests another language.
-
-Be practical, clear and teacher-friendly.
-"""
+Be practical, clear, accurate and teacher-friendly."""
     ),
-
     (
         "human",
-        """
-Grade: {grade}
-
+        """Grade: {grade}
 Subject: {subject}
 
 Teacher's Question:
 {question}
 
-Relevant Curriculum Context:
-{context}
-"""
+Uploaded Document Context:
+{context}"""
     )
-
 ])
 
 
-def teaching_assistant(
-    grade,
-    subject,
-    question
-):
-
+def teaching_assistant(grade, subject, question, uploaded_retriever=None):
     if not question.strip():
         return "Please enter a question."
 
+    if uploaded_retriever is not None:
+        context = retrieve_uploaded_context(
+            uploaded_retriever,
+            f"{grade} {subject} {question}"
+        )
+    else:
+        context = "NO DOCUMENT UPLOADED. Answer using general educational knowledge."
 
-    context = retrieve_context(
-        f"{grade} {subject} {question}"
-    )
-
-
-    response = (
-        assistant_prompt
-        | llm
-    ).invoke({
-
+    response = (assistant_prompt | llm).invoke({
         "grade": grade,
-
         "subject": subject,
-
         "question": question,
-
         "context": context
     })
-
 
     return response.content
 
@@ -1428,23 +1465,12 @@ with st.sidebar:
     st.markdown("### 📌 Project")
     st.markdown("**Subjects:** 8  \n**Grades:** 1–12  \n**RAG:** Chroma  \n**LLM:** ChatGroq  \n**Framework:** LangChain")
     st.markdown("---")
-    st.markdown("### 📖 Curriculum RAG")
-    uploaded_file = st.file_uploader(
-        "Upload curriculum",
-        type=["pdf", "docx", "txt", "md"],
-        help="Upload a curriculum document to ground TeachMate's answers.",
+    st.markdown("### 💡 AI Assistant")
+    st.markdown(
+        "Upload a document inside the **AI Assistant** when you want TeachMate "
+        "to answer from your own material. Without a document, it answers normally "
+        "using its general educational knowledge."
     )
-    if st.button("📤 Process Curriculum", use_container_width=True):
-        if uploaded_file is None:
-            st.warning("Please upload a curriculum document first.")
-        else:
-            temp_path = Path("/tmp") / uploaded_file.name
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            with st.spinner("Processing curriculum..."):
-                result = run_safely(process_curriculum, str(temp_path))
-            if result:
-                st.success(result)
 
 tabs = st.tabs([
     "📚 Lesson Planner", "📝 Worksheet", "📊 Assessment",
@@ -1622,26 +1648,101 @@ with tabs[5]:
 
 with tabs[6]:
     st.subheader("🤖 AI Teaching Assistant")
+    st.caption(
+        "Ask TeachMate anything about teaching. Upload a document when you want "
+        "answers grounded in your own curriculum, textbook, notes or teacher guide."
+    )
+
     c1, c2 = st.columns(2)
     with c1:
         ta_grade = st.selectbox("Grade", GRADES, index=4, key="ta_grade")
     with c2:
         ta_subject = st.selectbox("Subject", SUBJECTS, index=2, key="ta_subject")
 
+    st.markdown("### 📎 Optional Document")
+    st.caption(
+        "Upload a PDF, DOCX, TXT or Markdown file. If you do not upload a file, "
+        "TeachMate will answer using its general educational knowledge."
+    )
+
+    ta_file = st.file_uploader(
+        "Upload your document",
+        type=["pdf", "docx", "txt", "md"],
+        key="ta_file",
+        help="Examples: curriculum, syllabus, textbook chapter, lecture notes, teacher guide."
+    )
+
+    ta_uploaded_retriever = None
+    ta_file_name = None
+
+    if ta_file is not None:
+        ta_file_bytes = ta_file.getvalue()
+        ta_file_name = ta_file.name
+        ta_file_hash = get_uploaded_file_hash(ta_file_bytes)
+
+        try:
+            with st.spinner("Reading and indexing your document..."):
+                (
+                    ta_uploaded_retriever,
+                    ta_source_sections,
+                    ta_searchable_chunks
+                ) = build_uploaded_retriever(
+                    ta_file_hash,
+                    ta_file_bytes,
+                    ta_file_name
+                )
+
+            st.success(
+                f"📚 Document ready: **{ta_file_name}** • "
+                f"{ta_searchable_chunks} searchable chunks"
+            )
+            st.caption(
+                "TeachMate will use this uploaded document as the primary source "
+                "for document-specific questions."
+            )
+        except Exception as e:
+            st.error(
+                f"Could not process the uploaded document: "
+                f"{type(e).__name__}: {e}"
+            )
+            ta_uploaded_retriever = None
+
+    st.markdown("### 💬 Ask TeachMate")
     ta_question = st.text_area(
-        "Ask TeachMate", height=150,
-        placeholder="Ask about teaching, pedagogy, activities, examples, classroom management...",
+        "Your Question",
+        height=150,
+        placeholder=(
+            "Example: According to this document, what should Grade 5 students "
+            "learn about fractions?"
+        ),
         key="ta_question"
     )
 
-    if st.button("💬 Ask TeachMate", type="primary", use_container_width=True, key="ask_ta"):
+    if st.button(
+        "💬 Ask TeachMate",
+        type="primary",
+        use_container_width=True,
+        key="ask_ta"
+    ):
         if not ta_question.strip():
             st.warning("Please enter a question.")
         else:
             with st.spinner("TeachMate is thinking..."):
-                result = run_safely(teaching_assistant, ta_grade, ta_subject, ta_question)
+                result = run_safely(
+                    teaching_assistant,
+                    ta_grade,
+                    ta_subject,
+                    ta_question,
+                    ta_uploaded_retriever
+                )
+
             if result:
+                if ta_uploaded_retriever is not None and ta_file_name:
+                    st.info(f"📚 Answer based on: **{ta_file_name}**")
+                else:
+                    st.info("🤖 Answered using TeachMate AI's general educational knowledge")
                 display_output(result, ta_subject)
+
 
 st.markdown("""
 <div class="footer">
