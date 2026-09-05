@@ -1535,35 +1535,35 @@ with tabs[2]:
         a_types = st.text_input("Question Types", "MCQ, short questions, long questions", key="a_types")
 
     if st.button(
-    "✨ Generate Assessment",
-    type="primary",
-    use_container_width=True,
-    key="generate_assessment"
-):
-    if not a_topic.strip():
-        st.warning("Please enter a topic.")
-    else:
-        with st.spinner("Creating assessment..."):
-            try:
-                result = generate_assessment(
-                    a_grade,
-                    a_subject,
-                    a_topic,
-                    int(a_marks),
-                    a_difficulty,
-                    a_types
-                )
-
-                display_output(
-                    format_assessment(result),
-                    a_subject
-                )
-
-            except Exception as e:
-                st.error(
-                    f"Assessment generation failed: "
-                    f"{type(e).__name__}: {e}"
-                )
+        "✨ Generate Assessment",
+        type="primary",
+        use_container_width=True,
+        key="generate_assessment"
+    ):
+        if not a_topic.strip():
+            st.warning("Please enter a topic.")
+        else:
+            with st.spinner("Creating assessment..."):
+                try:
+                    result = generate_assessment(
+                        a_grade,
+                        a_subject,
+                        a_topic,
+                        int(a_marks),
+                        a_difficulty,
+                        a_types
+                    )
+    
+                    display_output(
+                        format_assessment(result),
+                        a_subject
+                    )
+    
+                except Exception as e:
+                    st.error(
+                        f"Assessment generation failed: "
+                        f"{type(e).__name__}: {e}"
+                    )
 
 with tabs[3]:
     st.subheader("🎯 Differentiated Learning")
