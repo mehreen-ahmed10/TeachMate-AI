@@ -1285,22 +1285,22 @@ with tabs[1]:
         w_types = st.text_input("Question Types", "MCQ, short questions, fill in blanks", key="w_types")
 
     if st.button("✨ Generate Worksheet", type="primary", use_container_width=True, key="generate_ws"):
-    if not w_topic.strip():
-        st.warning("Please enter a topic.")
-    else:
-        with st.spinner("Creating worksheet..."):
-            result = run_safely(
-                generate_worksheet,
-                w_grade,
-                w_subject,
-                w_topic,
-                w_difficulty,
-                int(w_count),
-                w_types
-            )
-
-        if result:
-            display_output(format_worksheet(result), w_subject)
+        if not w_topic.strip():
+            st.warning("Please enter a topic.")
+        else:
+            with st.spinner("Creating worksheet..."):
+                result = run_safely(
+                    generate_worksheet,
+                    w_grade,
+                    w_subject,
+                    w_topic,
+                    w_difficulty,
+                    int(w_count),
+                    w_types
+                )
+    
+            if result:
+                display_output(format_worksheet(result), w_subject)
 
 with tabs[2]:
     st.subheader("📊 Assessment Generator")
