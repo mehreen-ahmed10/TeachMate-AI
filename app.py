@@ -781,12 +781,12 @@ def format_lesson_plan(plan: LessonPlan):
         or "islamiyat" in subject_lower
     )
 
-  outcomes = "\n\n".join(
-    f"{i + 1}. {re.sub(r'^\s*\d+[\.\)]\s*', '', str(outcome))}"
-    for i, outcome in enumerate(
-        plan.student_learning_outcomes
+      outcomes = "\n\n".join(
+        f"{i + 1}. {re.sub(r'^\s*\d+[\.\)]\s*', '', str(outcome))}"
+        for i, outcome in enumerate(
+            plan.student_learning_outcomes
+        )
     )
-)
 
     resources = "\n".join(
         f"- {item}"
@@ -798,14 +798,14 @@ def format_lesson_plan(plan: LessonPlan):
         for item in plan.teaching_learning_methods
     )
 
-   import re
+    import re
 
-procedure = "\n".join(
-    f"{i + 1}. {re.sub(r'^\s*\d+[\.\)]\s*', '', str(step))}"
-    for i, step in enumerate(
-        plan.methodology_procedure
+    procedure = "\n".join(
+        f"{i + 1}. {re.sub(r'^\s*\d+[\.\)]\s*', '', str(step))}"
+        for i, step in enumerate(
+            plan.methodology_procedure
+        )
     )
-)
 
 
     # ========================================================
