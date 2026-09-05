@@ -4,6 +4,8 @@ LangChain + ChatGroq + RAG + Chroma + Pydantic
 """
 
 import os
+import re
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -786,7 +788,7 @@ def format_lesson_plan(plan: LessonPlan):
         for i, outcome in enumerate(
             plan.student_learning_outcomes
         )
-    )
+      )
 
     resources = "\n".join(
         f"- {item}"
